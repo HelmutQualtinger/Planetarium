@@ -1,5 +1,5 @@
 
-[**Sonnensystem-Simulation**](https://qualcuno.info/Planetarium/)
+[**Online-Sonnensystem-Simulation**](https://qualcuno.info/Planetarium/)
 # Sonnensystem-Simulation mit VPython
 
 ## Deutsch
