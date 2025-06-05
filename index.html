@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Sonnensystem in Three.js</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px; left: 10px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 15px;
+            z-index: 10;
+            user-select: none;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="info">
+        <b>Sonnensystem Simulation</b><br>
+        + / - : Zeitfaktor ändern<br>
+        Leertaste: Pause/Fortsetzen<br>
+        Maus: Rotieren, Scrollen: Zoomen
+    </div>
+    <script>
+        // --- Szene, Kamera, Renderer ---
+        var scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+
+        var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 100);
+        camera.position.set(0, 2, 8);
+
+        var renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        var controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.07;
+        controls.target.set(0, 0, 0);
+
+        // --- Licht ---
+        var sunLight = new THREE.PointLight(0xffffff, 2, 0);
+        sunLight.position.set(0, 0, 0);
+        scene.add(sunLight);
+
+        // --- Hilfsfunktionen ---
+        function ellipticalPosition(a, e, angle, inclination, nodeAngle, theta) {
+            var r = a * (1 - e * e) / (1 + e * Math.cos(theta));
+            var x = r * Math.cos(theta);
+            var y = r * Math.sin(theta);
+
+            // Rotation in der Bahnebene
+            var x_rot = x * Math.cos(angle) - y * Math.sin(angle);
+            var y_rot = x * Math.sin(angle) + y * Math.cos(angle);
+
+            // Knotenwinkel (z-Rotation)
+            var x_node = x_rot * Math.cos(nodeAngle) - y_rot * Math.sin(nodeAngle);
+            var y_node = x_rot * Math.sin(nodeAngle) + y_rot * Math.cos(nodeAngle);
+
+            // Neigung (x-Rotation)
+            var y_incl = y_node * Math.cos(inclination);
+            var z_incl = y_node * Math.sin(inclination);
+
+            return new THREE.Vector3(x_node, z_incl, y_incl);
+        }
+
+        function createTrail(color, length) {
+            var geometry = new THREE.BufferGeometry();
+            var positions = new Float32Array(length * 3);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            var material = new THREE.PointsMaterial({ color: color, size: 0.03 });
+            var points = new THREE.Points(geometry, material);
+            points.userData = { positions: positions, length: length, head: 0 };
+            return points;
+        }
+
+        function updateTrail(trail, pos) {
+            var positions = trail.userData.positions;
+            var length = trail.userData.length;
+            var head = trail.userData.head;
+            positions[head * 3] = pos.x;
+            positions[head * 3 + 1] = pos.y;
+            positions[head * 3 + 2] = pos.z;
+            head = (head + 1) % length;
+            trail.userData.head = head;
+            trail.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            trail.geometry.attributes.position.needsUpdate = true;
+        }
+
+        // --- Planeten-Parameter ---
+        var planets = [
+            // Sonne
+            {
+                name: "Sonne",
+                color: 0xffff00,
+                radius: 0.3,
+                pos: new THREE.Vector3(0, 0, 0),
+                emissive: 1.5
+            },
+            // Merkur
+            {
+                name: "Merkur",
+                color: 0xaaaaaa,
+                radius: 0.04,
+                a: 0.7, e: 0.206, angle: THREE.Math.degToRad(20), inc: THREE.Math.degToRad(25), node: THREE.Math.degToRad(30),
+                velocity: 0.5, trailColor: 0x888888
+            },
+            // Venus
+            {
+                name: "Venus",
+                color: 0xffa500,
+                radius: 0.07,
+                a: 1.0, e: 0.007, angle: THREE.Math.degToRad(10), inc: THREE.Math.degToRad(40), node: THREE.Math.degToRad(90),
+                velocity: 0.35, trailColor: 0xffa500
+            },
+            // Erde
+            {
+                name: "Erde",
+                color: 0x3366ff,
+                radius: 0.07,
+                a: 1.4, e: 0.017, angle: 0, inc: 0, node: 0,
+                velocity: 0.25, trailColor: 0x3366ff
+            },
+            // Mars
+            {
+                name: "Mars",
+                color: 0xff3333,
+                radius: 0.06,
+                a: 1.8, e: 0.093, angle: THREE.Math.degToRad(15), inc: THREE.Math.degToRad(35), node: THREE.Math.degToRad(150),
+                velocity: 0.18, trailColor: 0xff3333
+            },
+            // Jupiter
+            {
+                name: "Jupiter",
+                color: 0xccb080,
+                radius: 0.15,
+                a: 2.5, e: 0.048, angle: THREE.Math.degToRad(5), inc: THREE.Math.degToRad(20), node: THREE.Math.degToRad(210),
+                velocity: 0.12, trailColor: 0xffa500
+            },
+            // Saturn
+            {
+                name: "Saturn",
+                color: 0xf5e6c6,
+                radius: 0.13,
+                a: 3.2, e: 0.056, angle: THREE.Math.degToRad(8), inc: THREE.Math.degToRad(15), node: THREE.Math.degToRad(270),
+                velocity: 0.09, trailColor: 0xf5e6c6
+            }
+        ];
+
+        // --- Planeten erstellen ---
+        var planetMeshes = [];
+        var planetTrails = [];
+        var planetThetas = [];
+        for (var i = 0; i < planets.length; i++) {
+            var p = planets[i];
+            var mesh;
+            if (i === 0) {
+                // Sonne
+                var mat = new THREE.MeshStandardMaterial({ color: p.color, emissive: p.color, emissiveIntensity: p.emissive });
+                mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 32, 32), mat);
+                mesh.position.copy(p.pos);
+            } else {
+                var mat = new THREE.MeshStandardMaterial({ color: p.color });
+                mesh = new THREE.Mesh(new THREE.SphereGeometry(p.radius, 32, 32), mat);
+                var theta = Math.random() * Math.PI * 2;
+                planetThetas[i] = theta;
+                mesh.position.copy(ellipticalPosition(p.a, p.e, p.angle, p.inc, p.node, theta));
+                var trail = createTrail(p.trailColor, 300);
+                scene.add(trail);
+                planetTrails[i] = trail;
+            }
+            scene.add(mesh);
+            planetMeshes[i] = mesh;
+        }
+
+        // --- Erde-Mond ---
+        var moonEarth = {
+            color: 0xbbbbbb, radius: 0.025, distance: 0.18,
+            inc: THREE.Math.degToRad(30), node: THREE.Math.degToRad(60), speed: 0.5, trailColor: 0xbbbbbb
+        };
+        var moonEarthMesh = new THREE.Mesh(new THREE.SphereGeometry(moonEarth.radius, 24, 24), new THREE.MeshStandardMaterial({ color: moonEarth.color }));
+        var moonEarthTheta = Math.random() * Math.PI * 2;
+        moonEarthMesh.position.copy(planetMeshes[3].position.clone().add(ellipticalPosition(moonEarth.distance, 0, 0, moonEarth.inc, moonEarth.node, moonEarthTheta)));
+        scene.add(moonEarthMesh);
+        var moonEarthTrail = createTrail(moonEarth.trailColor, 300);
+        scene.add(moonEarthTrail);
+
+        // --- Jupiter-Monde ---
+        var moons = [
+            { color: 0xffff00, radius: 0.03, distance: 0.25, inc: THREE.Math.degToRad(10), node: THREE.Math.degToRad(20), speed: 0.7, trailColor: 0xffff00 },
+            { color: 0xffffff, radius: 0.028, distance: 0.32, inc: THREE.Math.degToRad(15), node: THREE.Math.degToRad(60), speed: 0.5, trailColor: 0xffffff },
+            { color: 0x999999, radius: 0.035, distance: 0.40, inc: THREE.Math.degToRad(20), node: THREE.Math.degToRad(100), speed: 0.35, trailColor: 0x999999 },
+            { color: 0x666666, radius: 0.03, distance: 0.48, inc: THREE.Math.degToRad(25), node: THREE.Math.degToRad(140), speed: 0.22, trailColor: 0x666666 }
+        ];
+        var moonMeshes = [];
+        var moonTrails = [];
+        var moonThetas = [];
+        for (var i = 0; i < moons.length; i++) {
+            var m = moons[i];
+            var mat = new THREE.MeshStandardMaterial({ color: m.color });
+            var mesh = new THREE.Mesh(new THREE.SphereGeometry(m.radius, 24, 24), mat);
+            var theta = Math.random() * Math.PI * 2;
+            moonThetas[i] = theta;
+            mesh.position.copy(planetMeshes[5].position.clone().add(ellipticalPosition(m.distance, 0, 0, m.inc, m.node, theta)));
+            scene.add(mesh);
+            moonMeshes[i] = mesh;
+            var trail = createTrail(m.trailColor, 300);
+            scene.add(trail);
+            moonTrails[i] = trail;
+        }
+
+        // --- Saturnringe ---
+        function createSaturnRings(center, inner, outer, count, inclination, nodeAngle) {
+            var rings = [];
+            for (var i = 0; i < count; i++) {
+                var r = inner + (outer - inner) * (i / (count - 1));
+                var ringGeom = new THREE.TorusGeometry(r, 0.01, 8, 80);
+                var ringMat = new THREE.MeshBasicMaterial({ color: 0xf5e6c6, transparent: true, opacity: 0.5 });
+                var ringMesh = new THREE.Mesh(ringGeom, ringMat);
+                ringMesh.position.copy(center);
+                ringMesh.rotation.x = Math.PI / 2 - inclination;
+                ringMesh.rotation.z = nodeAngle;
+                scene.add(ringMesh);
+                rings.push(ringMesh);
+            }
+            return rings;
+        }
+        var saturnRings = createSaturnRings(planetMeshes[6].position, 0.18, 0.32, 5, THREE.Math.degToRad(27), planets[6].node);
+
+        // --- Sonnenflecken ---
+        var sunSpots = [];
+        var sunSpotCount = 12; // Anzahl der Sonnenflecken
+        for (var i = 0; i < sunSpotCount; i++) {
+            // Zufällige Kugelkoordinaten auf der Sonnenoberfläche
+            var theta = Math.random() * 2 * Math.PI;
+            var phi = Math.acos(2 * Math.random() - 1);
+            var r = planets[0].radius * 1.01; // leicht über der Oberfläche
+            var x = r * Math.sin(phi) * Math.cos(theta);
+            var y = r * Math.sin(phi) * Math.sin(theta);
+            var z = r * Math.cos(phi);
+
+            var spotGeom = new THREE.SphereGeometry(0.03, 12, 12);
+            var spotMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            var spot = new THREE.Mesh(spotGeom, spotMat);
+            spot.position.set(x, y, z);
+            // Sonnenflecken sollen sich mit der Sonne drehen:
+            planets[0].mesh = planetMeshes[0];
+            planets[0].mesh.add(spot);
+            sunSpots.push(spot);
+        }
+
+        // --- Animation ---
+        var running = true;
+        var timeFactor = 10.0; // viel schneller als vorher
+        var dt = 0.01;
+
+        window.addEventListener('keydown', function(e) {
+            if (e.key === '+') timeFactor *= 1.5;
+            if (e.key === '-') timeFactor /= 1.5;
+            if (e.key === ' ') running = !running;
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            if (running) {
+                // Planeten
+                for (var i = 1; i < planets.length; i++) {
+                    planetThetas[i] += planets[i].velocity * dt * timeFactor;
+                    if (planetThetas[i] > Math.PI * 2) planetThetas[i] -= Math.PI * 2;
+                    var pos = ellipticalPosition(planets[i].a, planets[i].e, planets[i].angle, planets[i].inc, planets[i].node, planetThetas[i]);
+                    planetMeshes[i].position.copy(pos);
+                    updateTrail(planetTrails[i], pos);
+                }
+                // Erde-Mond
+                moonEarthTheta += moonEarth.speed * dt * timeFactor;
+                if (moonEarthTheta > Math.PI * 2) moonEarthTheta -= Math.PI * 2;
+                var moonEarthPos = planetMeshes[3].position.clone().add(ellipticalPosition(moonEarth.distance, 0, 0, moonEarth.inc, moonEarth.node, moonEarthTheta));
+                moonEarthMesh.position.copy(moonEarthPos);
+                updateTrail(moonEarthTrail, moonEarthPos);
+
+                // Jupiter-Monde
+                for (var i = 0; i < moons.length; i++) {
+                    moonThetas[i] += moons[i].speed * dt * timeFactor;
+                    if (moonThetas[i] > Math.PI * 2) moonThetas[i] -= Math.PI * 2;
+                    var moonPos = planetMeshes[5].position.clone().add(ellipticalPosition(moons[i].distance, 0, 0, moons[i].inc, moons[i].node, moonThetas[i]));
+                    moonMeshes[i].position.copy(moonPos);
+                    updateTrail(moonTrails[i], moonPos);
+                }
+                // Saturnringe mit Saturn bewegen
+                for (var i = 0; i < saturnRings.length; i++) {
+                    saturnRings[i].position.copy(planetMeshes[6].position);
+                }
+                // Sonnenrotation
+                planets[0].mesh.rotation.y += 0.002;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- Responsives Canvas ---
+        window.addEventListener('resize', function() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+    </script>
+</body>
+</html>
